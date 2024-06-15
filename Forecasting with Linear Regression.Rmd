@@ -1,0 +1,524 @@
+---
+title: "Forecasting with Linear Regression"
+author: "Nicholas Bradley"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include = FALSE}
+library(TSstudio)
+library(plotly)
+library(dplyr)
+library(lubridate)
+library(forecast)
+library(UKgrid)
+setwd("C:/R Portfolio/Time Series")
+```
+
+# Forecasting with Linear Regression
+
+The focus of this analysis is on methods and approaches for forecasting time series data with linear regression, including methods for decomposing and forecasting the series components (for example the trend and seasonal patterns), handling special events such as outliers and holidays and using external variables as regressors. The following topics are covered:
+
+- Forecasting approaches with linear regression models
+- Extracting and estimating series components
+- Handling structural breaks, outliers and special events
+- Forecasting series with multiseasonality
+
+## The linear regression
+
+For a single independent variable (simple linear regression), the equation is:
+
+\[ y = \beta_0 + \beta_1 \times x + \varepsilon \]
+
+For multiple independent variables (multiple linear regression), the equation is:
+
+\[ y = \beta_0 + \beta_1 \times x_1 + \beta_2 \times x_2 + \ldots + \beta_n \times x_n + \varepsilon \]
+
+The model variables for these equations are as follows:
+
+- **`y`**: This represents the dependent variable or the response variable in your dataset. It's the variable you are trying to predict or explain.
+
+- **`x`** (simple linear regression) or **`x1, x2, ..., xn`** (multiple linear regression)**:** These are the independent variables or predictor variables. They represent the variables that you believe may have an influence on the dependent variable `y`.
+
+- **\(\beta_0\)**: This is the intercept term in the linear regression model. It represents the value of the dependent variable `y` when all the independent variables are set to zero. In other words, it represents the expected value of `y` when all predictor variables are absent or have no effect.
+
+- **\(\beta_1, \beta_2, ..., \beta_n\)**: These are the coefficients or regression coefficients. They represent the change in the dependent variable `y` for a one-unit change in the corresponding independent variable `x` (in simple linear regression) or `x1, x2, ..., xn` (in multiple linear regression), holding all other variables constant. They quantify the strength and direction of the relationship between each predictor variable and the response variable.
+
+- **\(\varepsilon\)**: This is the error term or the residual term. It represents the difference between the observed value of the dependent variable `y` and the value predicted by the regression equation. It captures the variability in `y` that cannot be explained by the predictor variables included in the model. The error term accounts for factors other than the predictor variables that may affect the dependent variable. It is assumed to follow a normal distribution with mean zero.
+
+## Forecasting with linear regression
+
+Forecasting with such a model is based on two steps:
+
+- Identifying series sructure, key characteristics, patterns, outliers, and other features
+- Transform those features into input variables and regress them with the series to create a forecasting model
+
+The core components of a linear regression forecasting model are the trend and seasonal components. 
+
+## Features engineering of the series components
+
+Before creating the regression inputs that represent the series trend and seasonal components, we first have to understand their structure. I can create new features from the US gas series
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+load("USgas.RData")
+ts_plot(USgas,
+        title = "US Monthly Natural Gas consumption",
+        Ytitle = "Billion Cubic Feet",
+        Xtitle = "Year")
+```
+
+As can be seen, US gas is a monthly series with a strong monthly seasonal component and fairly stable trend line. We can explore the series component structure with the ts_decompose function further.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+ts_decompose(USgas)
+```
+
+As seen in the above plot, the trend of the series is fairly flat between 2000 and 2010 and has a fairly linear growth moving forward. Therefore, the overall trend between 2000 and 2018 is not strictly linear. This important insight will help to define the trend output for the regression model. Before constructing a linear model, we first need to transform the data from a time series into a data frame object
+
+```{r, echo = FALSE}
+USgas_df <- ts_to_prophet(USgas)
+head(USgas_df)
+```
+
+We can now start to create the regression input features, starting with a series trend variable. A basic approach is to index the series observations chronologically. 
+
+```{r, echo = FALSE}
+USgas_df$trend <- 1:nrow(USgas_df)
+```
+
+We can also create a seasonal component variable. As we want to measure the contribution of each frequency unit to the oscilliation of the series, we will use a categorical variable for each frequency unit. In terms of the US gas series, the frequency units represent the months of the year and so, we create a categorical variable with 12 categories, each category corresponding to a specific month. 
+
+```{r, echo = FALSE}
+USgas_df$seasonal <- factor(month(USgas_df$ds, label = T), ordered = FALSE)
+head(USgas_df)
+```
+
+It is also neccesary to split the series into training and test partitions and the last 12 months can be used as the test data
+
+```{r, echo = FALSE}
+h <- 12 # setting a testing partition length
+train <- USgas_df[1:(nrow(USgas_df) - h), ]
+test <- USgas_df[(nrow(USgas_df) - h + 1):nrow(USgas_df), ]
+```
+
+
+## Modelling the series trend and seasonal components
+
+We can first model the series trend by regressing the series with the trend variable on the training data
+
+```{r, echo = FALSE}
+md_trend <- lm(y ~ trend, data = train)
+summary(md_trend)
+```
+The summary reveals that the trend variable is very statistically significant in terms of y variable. It is 0.00000000486, which is much more statistically significant than the 0.05 or 0.01 thresholds.
+
+It is important to add further context to this model through visualisation and we can create a plot that indicates the actual values, predicted values and forecasted values
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+train$yhat <- predict(md_trend, newdata = train)
+
+test$yhat <- predict(md_trend, newdata = test)
+plot_lm <- function(data, train, test, title = NULL){
+  p <- plot_ly(data = data, 
+               x = ~ ds, 
+               y = ~ y, 
+               type = "scatter",
+               mode = "line",
+               name = "Actual") %>%
+    add_lines(x =  ~ train$ds,
+              y = ~ train$yhat,
+              line = list(color = "red"),
+              name = "Fitted") %>%
+    add_lines(x =  ~ test$ds,
+              y = ~ test$yhat,
+              line = list(color = "green", dash = "dot", width = 3),
+              name = "Forecasted") %>%
+    layout(title = title,
+           xaxis = list(title = ""),
+           yaxis = list(title = "Billion Cubic Feet"),
+           legend = list(x = 0.05, y = 0.95))
+  return(p)
+}
+```
+
+The function plot_lm is designed to create an interactive plot using the plotly library in R. This plot visualizes the actual data, the fitted values from a linear regression model, and the forecasted values for a time series dataset. Here's a breakdown of what the function does:
+
+Function Definition and Parameters
+Function Name: plot_lm
+Parameters:
+- data: The complete dataset containing the actual values.
+- train: The training dataset containing the fitted values (yhat).
+- test: The test dataset containing the forecasted values (yhat).
+- title (optional): A title for the plot.
+
+Plot Creation
+Initialize Plot:
+
+- plot_ly initializes a plotly object using the data parameter.
+- x = ~ ds sets the x-axis to the ds column (which likely contains date or time information).
+- y = ~ y sets the y-axis to the y column (which contains the actual values).
+- type = "scatter" and mode = "line" specify that the plot will be a line plot.
+- name = "Actual" labels this trace as "Actual".
+
+Add Fitted Values:
+
+- add_lines adds a new line to the plot.
+- x = ~ train$ds uses the ds column from the train dataset for the x-axis.
+- y = ~ train$yhat uses the yhat column from the train dataset for the y-axis, which contains the fitted values.
+- line = list(color = "red") specifies the line color as red.
+- name = "Fitted" labels this trace as "Fitted".
+
+Add Forecasted Values:
+
+- Another add_lines adds a new line for the forecasted values.
+- x = ~ test$ds uses the ds column from the test dataset for the x-axis.
+- y = ~ test$yhat uses the yhat column from the test dataset for the y-axis, which contains the forecasted values.
+- line = list(color = "green", dash = "dot", width = 3) specifies the line color as green, with a dotted style and width of 3.
+- name = "Forecasted" labels this trace as "Forecasted".
+
+Layout Customization:
+
+- layout sets the overall layout of the plot.
+- title = title sets the plot title to the provided title parameter.
+- xaxis = list(title = "") leaves the x-axis title empty.
+- yaxis = list(title = "Billion Cubic Feet") sets the y-axis title to "Billion Cubic Feet".
+- legend = list(x = 0.05, y = 0.95) positions the legend at the specified coordinates within the plot.
+
+Return Value
+
+- The function returns the constructed plotly object p.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+plot_lm(data = USgas_df, 
+        train = train, 
+        test = test,
+        title = "Predicting the Trend Component of the Series")
+```
+
+Overall, the model was able to capture the general movement of the trend, yet a linear trend may fail to capture the structural break of the trend that occurred around 2010. By means of comparison analysis, we can measure the error rate both for the training and test data sets
+
+```{r, echo = FALSE}
+mape_trend <- c(mean(abs(train$y - train$yhat) / train$y),
+                mean(abs(test$y - test$yhat) / test$y))
+
+mape_trend
+```
+We can now model the seasonal component
+
+```{r, echo = FALSE}
+md_seasonal <- lm(y ~ seasonal, data = train)
+summary(md_seasonal)
+```
+As seen, all the models coefficients are statistically significant. An Adjusted R-squared value of 0.7394 means that approximately 73.94% of the variance in the dependent variable (the variable you are trying to predict or explain) is accounted for by the independent variables (the predictors) included in the model. Before we plot the fitted model and forecast values, let's update the yhat values with the predict function
+
+```{r, echo = FALSE}
+train$yhat <- predict(md_seasonal, newdata = train)
+test$yhat <- predict(md_seasonal, newdata = test)
+```
+
+Now we can plot it
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+plot_lm(data = USgas_df, 
+        train = train, 
+        test = test,
+        title = "Predicting the Seasonal Component of the Series")
+```
+As can be seen, the model does a good job of capturing the structure of the series seasonal pattern. However, as evident, the series trend is missing, but before we add the trend and seasonal components, let's score the model performance
+
+```{r, echo = FALSE}
+mape_seasonal <- c(mean(abs(train$y - train$yhat) / train$y),
+                   mean(abs(test$y - test$yhat) / test$y))
+mape_seasonal
+```
+The high error rate on the test data is related to the trend component that was not included in the model. The next step is to join the two components into one model and to forecast the feature values of the series
+
+```{r, echo = FALSE}
+md1 <- lm(y ~ seasonal + trend, data = train)
+summary(md1)
+```
+The adjusted-squared value is 0.9094, which means that nealy 91% of the variance in the data is explained by the predictors, so the model fits the data very well, which can be seen from the plot of the model
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+train$yhat <- predict(md1, newdata = train)
+test$yhat <- predict(md1, newdata = test)
+
+
+plot_lm(data = USgas_df, 
+        train = train, 
+        test = test,
+        title = "Predicting the Seasonal Component of the Series")
+```
+
+The plot indicates that the model trend is to linear and missing the structural break of the series trend. This is the point where adding a polynomial component for the model could potentially further improve model accuracy
+
+We can check the error scores
+
+```{r, echo = FALSE}
+mape_md1 <- c(mean(abs(train$y - train$yhat) / train$y),
+              mean(abs(test$y - test$yhat) / test$y))
+mape_md1
+```
+Mean Absolute Percentage Error (MAPE) measures the accuracy of a forecasting model by comparing the absolute errors between the predicted and actual values as a percentage of the actual values. A MAPE of 4.77% suggests a relatively high level of accuracy in the forecasting model, indicating that it closely aligns with the training data. A MAPE of 9.14% suggests a moderate level of accuracy in the forecasting model. While it is not as accurate as the first dataset, it still provides reasonably good predictions for the test data.
+
+We can fit the polynomial term
+
+```{r, echo = FALSE}
+md2 <- lm(y ~ seasonal + trend + I(trend^2), data = train)
+
+summary(md2)
+```
+Adding the polynomial term did not significantly improve the goodness of fit. However, as seen in the plot below, it did capture the structural break of the trend over time
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+train$yhat <- predict(md2, newdata = train)
+test$yhat <- predict(md2, newdata = test)
+
+
+plot_lm(data = USgas_df, 
+        train = train, 
+        test = test,
+        title = "Predicting the Seasonal Component of the Series")
+```
+
+```{r, echo = FALSE}
+mape_md2 <- c(mean(abs(train$y - train$yhat) / train$y),
+              mean(abs(test$y - test$yhat) / test$y))
+
+mape_md2
+```
+These MAPE scores are very good for the training and test data sets
+
+## The tslm function
+
+This function automatically transforms a time series object into a data frame and there are several advantages:
+
+- Efficiency - it does not require transforming the object to a data frame and feature engineering
+- The output object supports all of the functionality of the forecast and TSstudio packages
+
+```{r, echo = FALSE}
+USgas_split <- ts_split(USgas, sample.out = h)
+train.ts <- USgas_split$train
+test.ts <- USgas_split$test
+md3 <- tslm(train.ts ~ season + trend + I(trend^2))
+summary(md3)
+```
+## Modelling single events and non seasonal events
+
+In some cases, time series data may contain unusual patterns that are either re-occuring over time or not, including the following:
+
+- **Outliers:** A single event or events that are out of the normal patterns of the series
+- **Structural break:** A significant event that changes the historical pattern of the series. A common example is a change in the growth of the series.
+- **Non-seasonal re-occurring events:** An event that repeats from cycle to cycle, but the time at which they occur changes from cycle to cycle. A common example of such an event is the Easter holidays.
+
+To capture the structural break around the year 2010, we can create binary variable where rows before 2010 are indicated with the value 0 and those after are given the value of 1.
+
+```{r, echo = FALSE}
+r <- which(USgas_df$ds == as.Date("2014-01-01"))
+USgas_df$s_break <- ifelse(year(USgas_df$ds) >= 2010, 1, 0)
+USgas_df$s_break[r] <- 1
+md3 <- tslm(USgas ~ season + trend + I(trend^2) + s_break, data = USgas_df)
+summary(md3)
+```
+As seen in the above output, the structural break variable has significance of 0.03
+
+## Forecasting a series with multiseasonality components
+
+Linear regression has advantages over time series models like ARIMA or Holt Winters as it provides various customization options and enables complex time series to be modelled, such as that with multiseasonality. We can use the UK Grid time series in the modelling
+
+```{r, echo = FALSE}
+library(UKgrid)
+UKgrid <- extract_grid(type = "xts", 
+                       columns = "ND",
+                       aggregate = "daily")
+
+ts_info(UKgrid)
+```
+```{r, echo = FALSE}
+
+head(UKgrid)
+```
+```{r, echo = FALSE}
+# Convert the time series object to a data frame
+df <- data.frame(
+  TIMESTAMP = as.Date(time(UKgrid)),
+  ND = as.numeric(UKgrid)
+)
+
+# Print the data frame
+#print(df)
+```
+
+We can plot it 
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+ts_plot(df,
+        title = "The UK National Demand for Electricity",
+        Ytitle = "MW",
+        Xtitle = "Year")
+```
+As evident, there is a clea downward trend and there is a strong seasonal pattern.It also has multiple seasonality patterns:
+
+- **Daily:** A cycle of 365 days a yea
+- **Day of the week:** A seven day cycle
+- **Monthly:** Effected from the weather
+
+Evidence for these can be seen in the below heatmap
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+ts_heatmap(df[which(year(df$TIMESTAMP) >= 2016),],
+           title = "UK the Daily National Grid Demand Heatmap")
+```
+
+As evident, the overall demand increases throughut the winter weeks (calendar weeks 1-12 and 44-52). In addition,the demand increases during the working days of the week, and decreases over the weekend
+
+## Preprocessing and feature engineering of the UK grid series
+
+In order to capture the seasonal components of the series, we will set the series as daily frequency and create the following variables
+
+- Day of the week indicator
+- Month of the year indicator
+
+It is also reasonable to assume that the series has a strong correlation with the seasonal lags, and so we create a lag variable of 365 observations
+
+```{r, echo = FALSE}
+UKdaily <- df %>%
+  mutate(wday = wday(TIMESTAMP, label = TRUE),
+         month = month(TIMESTAMP, label = TRUE),
+         lag365 = dplyr::lag(ND, 365)) %>%
+  filter(!is.na(lag365)) %>%
+  arrange(TIMESTAMP)
+str(UKdaily)
+```
+The tslm function requires a time series object, so we convert it and review the series correlation with its lags from the past four years.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+start_date <- min(UKdaily$TIMESTAMP)
+start <- c(year(start_date), yday(start_date))
+UK_ts <- ts(UKdaily$ND, 
+            start = c(year(start_date), yday(start_date)),
+            frequency = 365)
+ts_cor(UK_ts, type = "both", seasonal = TRUE, ci = 0.95,
+  lag.max = 365 * 4)
+```
+
+The ACF plot shows the series has a strong relationship with the seasonal lags, in particular, lag 365, the first lag. We can now split the input series into training and test data sets. The goal is to forecast the next 365 observations.
+
+```{r, echo = FALSE}
+h <-  365
+UKpartitions <- ts_split(UK_ts, sample.out = h)
+train_ts <- UKpartitions$train
+test_ts <- UKpartitions$test
+
+train_df <- UKdaily[1:(nrow(UKdaily) - h), ]
+test_df <- UKdaily[(nrow(UKdaily) - h + 1):nrow(UKdaily), ]
+```
+
+## Training and testing the forecasting model
+
+We can use the training to train the following models:
+
+- **Baseline Model:** Regressing the series with the seasonal and trend components. As we set the series frequency to 365, the seasonal feature of the series refers to the daily seasonality.
+- **Multiseasonal model:** Adding the day of the week and month of the year indicators for capturing the multiseasonality of the series
+- **A multiseasonal model with a seasonal lag:** Using, in addition to the seasonal indicators, the seasonal lag variable.
+
+We start with the baseline model, regressing the series with its seasonal and trend components:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+md_tslm1 <- tslm(train_ts ~ season + trend)
+fc_tslm1 <- forecast(md_tslm1, h = h)
+test_forecast(actual = UK_ts,
+              forecast.obj = fc_tslm1,
+              test = test_ts)
+```
+
+The plot reveals that the baseline model is doing a great job of capturing the series trend and the day of the year seasonality. However, it fails to capture the oscillation that related to the day of the week. 
+
+```{r, echo = FALSE}
+accuracy(fc_tslm1, test_ts)
+```
+The MAPE score is 6.29% and 7.16% for the train and test set respectively. We can try to improve the accuracy by adding the day of the week and the month of the year to the model
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+md_tslm2 <- tslm(train_ts ~ season + trend + wday, data = train_df)
+fc_tslm2 <- forecast(md_tslm2, h = h, newdata = test_df)
+test_forecast(actual = UK_ts,
+              forecast.obj = fc_tslm2,
+              test = test_ts)
+```
+
+This model has captured the trend and multiseasonality of the series, which can also e observed by looking at the MAPE scores which have dropped to 3.16% and 4.68% for training and test respectively.
+
+```{r, echo = FALSE}
+accuracy(fc_tslm2, test_ts)
+```
+Let's now add the lag variable to the model:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+md_tslm3 <- tslm(train_ts ~ season + trend + wday + month + lag365, data = train_df)
+fc_tslm3 <- forecast(md_tslm3, h = h, newdata = test_df)
+test_forecast(actual = UK_ts,
+              forecast.obj = fc_tslm3,
+              test = test_ts)
+```
+
+It's hard to see from that plot alone any improvement from the second model, so let's review the MAPE scores. The MAPE score for the training is more or less the same, while for test, the score is slightly worse.
+
+```{r, echo = FALSE}
+accuracy(fc_tslm3, test_ts)
+```
+## Model selection
+
+We need to decide between the second and third model. The first question is to ask whether the lag variable in the third model is statistically significant?
+
+```{r, echo = FALSE}
+summary(md_tslm3)$coefficients %>% tail(1)
+```
+The p-value is statistically significant. We can further check for statistical significance by running an ANOVA test
+
+```{r, echo = FALSE}
+anova(md_tslm3)
+```
+The ANOVA test also reveals it as significant
+
+It may be that the second model is more accurate (has a better MAPE score) just by chance. Therefore, the backtesting of both models could help to validate one over the other. We select the final model as the second model:
+
+```{r, echo = FALSE}
+final_md <- tslm(train_ts ~ season + trend + wday, data = train_df)
+```
+
+## Residuals Analysis
+
+Just before we finalise the model, let's analyse the model residuals
+
+```{r, echo = FALSE}
+checkresiduals(final_md)
+```
+Some autocorrelation exists between the residuals series and their lags, which indicates that the model did not capture all the patterns or information that exists in the series. One way to address this is to identify additional variables that can explain the variation in the residuals,but it can be hard to identify additional variables.
+
+## Finalizing the forecast
+
+Lets finalize the model and forecast the future 365 observations.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+UK_fc_df <- data.frame(date = seq.Date(from = max(UKdaily$TIMESTAMP) + days(1), 
+                                       by = "day", 
+                                       length.out = h))
+
+UK_fc_df$wday <- factor(lubridate::wday(UK_fc_df$date, label = TRUE), ordered = FALSE)
+
+UK_fc_df$month <- factor(month(UK_fc_df$date, label = TRUE), ordered = FALSE)
+
+UK_fc_df$lag365 <- tail(UKdaily$ND, h)
+
+UKgrid_fc <- forecast(final_md, h = h, newdata = UK_fc_df)
+
+plot_forecast(UKgrid_fc,
+              title = "The UK National Demand for Electricity Forecast",
+              Ytitle = "MW",
+              Xtitle = "Year")
+```
+
+
+

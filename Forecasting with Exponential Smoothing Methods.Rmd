@@ -1,0 +1,483 @@
+---
+title: "Forecasting with Exponential Smoothing Models"
+author: "Nicholas Bradley"
+# date: "2024-05-29"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(forecast)
+library(h2o)
+library(TSstudio)
+library(plotly)
+library(dplyr)
+library(tidyr)
+library(Quandl)
+library(foreach)
+library(doParallel)
+setwd("C:/R Portfolio/Time Series")
+```
+
+# Forecasting with Exponential Smoothing Models
+
+This analysis will document forecasting with various exponential smoothing models and will cover the following topics:
+
+- Forecasting with moving average models
+- Forecasting approaches with smoothing models
+- Tuning parameters for smoothing models
+
+## Forecasting with moving average models
+
+The first such model is the simple moving average and it calculates the average of a series of data points over a specified period. The algebraic formula for the SMA model can be represented as:
+
+\[
+\text{SMA}(t) = \frac{1}{n} \sum_{i=t-n+1}^{t} x_i
+\]
+
+Where:
+- \( \text{SMA}(t) \) is the value of the moving average at time \( t \).
+- \( n \) is the number of periods in the moving average.
+- \( x_i \) is the value of the data point at time \( i \).
+
+This formula computes the average of the most recent \( n \) data points to obtain the current value of the moving average at time \( t \).
+
+Forecasting with SMA is recommended when the input series has no structural patterns, such as trend and seasonal components. In this case, it is reasonable to assume that the forecasted values are relatively close to the last observations of the series. We can use data on coffee prices to create a customised SMA and forecast the coffee prices for the next 12 months.This series has no  specific trend or seasonal patterns, but does have a cycle component, where the magnitude and length of the cycle keep changing from cycle to cycle. We can extract the monthly coffee prices
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+load("Coffee_Prices.RData")
+robusta <- Coffee_Prices[,1] 
+ts_plot(robusta,
+        title = "The Robusta Coffee Monthly Prices",
+        Ytitle = "Price in USD",
+        Xtitle = "Year")
+```
+
+We can now create a SMA function
+
+```{r, echo=FALSE}
+sma_forecast <- function(df, h, m, w = NULL){
+  
+  # Error handling
+  if(h > nrow(df)){
+    stop("The length of the forecast horizon must be shorter than the length of the series")}
+  
+  if(m > nrow(df)){
+    stop("The length of the rolling window must be shorter than the length of the series")}
+  if(!is.null(w)){
+    if(length(w) != m){
+      stop("The weight argument is not aligned with the length of the rolling window")
+    } else if(sum(w) !=1){
+      stop("The sum of the average weight is different than 1")
+    }
+  }
+  
+  # Setting the average weigths
+  if(is.null(w)){
+    w <- rep(1/m, m)
+  }
+  
+  # Setting the data frame 
+  #-----------------------
+  # Changing the Date object column name
+  names(df)[1] <- "date" 
+  # Setting the training and testing partition 
+  # according to the forecast horizon
+  df$type <- c(rep("train", nrow(df) - h), 
+               rep("test", h)) 
+  
+  # Spreading the table by the partition type
+  df1 <- df %>% spread(key = type, value = y)
+  
+  # Create the target variable
+  df1$yhat <- df1$train
+  
+  
+  # Simple moving average function
+  for(i in (nrow(df1) - h + 1):nrow(df1)){
+    r <- (i-m):(i-1) 
+    df1$yhat[i] <- sum(df1$yhat[r] * w) 
+  } 
+  
+  # dropping from the yhat variable the actual values
+  # that were used for the rolling window
+  df1$yhat <- ifelse(is.na(df1$test), NA, df1$yhat)
+  
+  df1$y <- ifelse(is.na(df1$test), df1$train, df1$test)
+  
+  return(df1)
+}
+```
+
+The main arguments in the function are:
+
+- **df:** the input series in a two-column data frame format, where the first column is a Date object and the second one is the actual values of the series
+- **h:** The horizon of the forecast. 
+- **m:** The length of the rolling window
+- **w:** The weights of the average by default, using equal weights.
+
+The sma_forecast function has the following components
+
+- **Error handling:** Test and veriy whether the input arguments of the function are valid. If one of the defined tests isn't true, it will stop the function from running and trigger an error message
+- **Data preparation:** This defines the data frame object based on the window length and forecast horizon.
+- **Data calculation:** Calculates the simple moving average and returns the results
+
+Lets use this function to forecast the last 24 months of the Robusta series using a rolling window of 3, 6, 12, 24 and 36 months:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+robusta_df <- ts_to_prophet(robusta)
+
+robusta_fc_m1 <-  sma_forecast(robusta_df, h = 24, m = 1)
+robusta_fc_m6 <-  sma_forecast(robusta_df, h = 24, m = 6)
+robusta_fc_m12 <- sma_forecast(robusta_df, h = 24, m = 12)
+robusta_fc_m24 <- sma_forecast(robusta_df, h = 24, m = 24)
+robusta_fc_m36 <- sma_forecast(robusta_df, h = 24, m = 36)
+
+plot_ly(data = robusta_df[650:nrow(robusta_df),], x = ~ ds, y = ~ y,
+        type = "scatter", mode = "lines", 
+        name = "Actual") %>%
+  add_lines(x = robusta_fc_m1$date, y = robusta_fc_m1$yhat, 
+            name = "SMA - 1", line = list(dash = "dash")) %>%
+  add_lines(x = robusta_fc_m6$date, y = robusta_fc_m6$yhat, 
+            name = "SMA - 6", line = list(dash = "dash")) %>%
+  add_lines(x = robusta_fc_m12$date, y = robusta_fc_m12$yhat, 
+            name = "SMA - 12", line = list(dash = "dash")) %>%
+  add_lines(x = robusta_fc_m24$date, y = robusta_fc_m24$yhat, 
+            name = "SMA - 24", line = list(dash = "dash")) %>%
+  add_lines(x = robusta_fc_m36$date, y = robusta_fc_m36$yhat, 
+            name = "SMA - 36", line = list(dash = "dash")) %>%
+  layout(title = "Forecasting the Robusta Coffee Monthly Prices",
+         xaxis = list(title = ""),
+         yaxis = list(title = "USD per Kg."))
+```
+The main observations from the plot are:
+
+- If the length of the rolling window is shorter:
+  - The range of the forecast is fairly close to the most recent observations of the series
+  
+- If the window length is longer:
+  - The longer it takes until the forecast converges to some constant value
+  - It can better handle shocks and outliers
+
+- An SMA forecasting model with a rolling window of a length of 1 is equivalent to the naive forecasting model
+
+While the SMA function is fairly simple and cheap on computing power, it does have limitations:
+
+- The forecasting power of the SMA function is limited to a short horizon and may have poor performance in the long run
+- This method is for time series dat, with no trend or seasonal patterns. This mainly effects the arithmetic average that smooths the seasonal pattern and becomes flat in the long run.
+
+## Weighted moving average
+
+This is an extended version of the SMA and is based on use of the weighted average and the main advantage compared to SMA is that it enables the user to distribute the weight of the lags on the rolling window. This can be useful when the series has a high correlation with some of the lags. WMA provides more flexibility as it can handle time series with a seasonal pattern. In the following example, we use the sma_forecast function to forecast the last 24 months of the US gas series. We utilise the w argument to set average weight and transform the SMA to WMA.
+
+```{r, echo = FALSE}
+load("USgas.RData")
+USgas_df <- ts_to_prophet(USgas)
+USgas_fc_m12a <- sma_forecast(USgas_df,
+                              h = 24,
+                              m = 12,
+                              w = c(1, rep(0,11)))
+USgas_fc_m12b <- sma_forecast(USgas_df,
+                              h = 24,
+                              m = 12,
+                              w = c(0.8, rep(0,10), 0.2))
+```
+
+Let's now plot the WMA models
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+plot_ly(data = USgas_df[190:nrow(USgas_df),], x = ~ ds, y = ~ y,
+        type = "scatter", mode = "lines", 
+        name = "Actual") %>%
+  add_lines(x = USgas_fc_m12a$date, y = USgas_fc_m12a$yhat, 
+            name = "WMA - Seasonal Lag", line = list(dash = "dash")) %>%
+  add_lines(x = USgas_fc_m12b$date, y = USgas_fc_m12b$yhat, 
+            name = "WMA - 12 (0.2/0.8)", line = list(dash = "dash")) %>%
+  layout(title = "Forecasting the Monthly Consumption of Natural Gas in the US",
+         xaxis = list(title = ""),
+         yaxis = list(title = "Billion Cubic Feet"))
+```
+
+Both models captured the seasonal oscillation to some extent. While it can capture seasonality, it cannot capture the series trend (due to the average effect) and therefore, will start to lose its effectiveness once the forecast horizon crosses the length of the series frequency (for example, more than a year for monthly series). The Holt Winter model can handle time series with both seasonal and trend components
+
+## Forecasting with exponential smoothing
+
+These models are among the most popular forecasting methods and a key distinction with SMA models is that it takes a subset of observations rather than average all observations. Such modelling can also handle series with trend and seasonal components and the main model types are:
+
+- Simple exponential smoothing model
+- Holt model
+- Holt Winters model
+
+## Simple exponential smoothing model
+
+The main assumption of the model is that the series stays at the same level (that is, the local mean of the series is constant) over time and therefore, the model is suitable for series with neither trend nor seasonal components. The SES model shares some of the attributes of the WMA model as both models forecast the future values by a weighted average of the past observations of the series. The main distinction is that the SES model is utilizing all the previous observations, whereas the WMA model is using only the most recent m observations (for a model with a rolling window of length m). The main attribute of the SES model is the weighted average, which is based on the exponential decay of the observations weights according to their chronological distance (that is, series index or timestamp) from the first forecasted values. The following example demonstrates the decay of the weights of the observations on the most recent 15 observations for values between 0.01 to 1:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+alpha_df <- data.frame(index = seq(from = 1, to = 15, by = 1),
+                       power = seq(from = 14, to = 0, by = -1))
+
+alpha_df$alpha_0.01 <- 0.01 * (1 - 0.01) ^ alpha_df$power
+alpha_df$alpha_0.2 <- 0.2 * (1 - 0.2) ^ alpha_df$power
+alpha_df$alpha_0.4 <- 0.4 * (1 - 0.4) ^ alpha_df$power
+alpha_df$alpha_0.6 <- 0.6 * (1 - 0.6) ^ alpha_df$power
+alpha_df$alpha_0.8 <- 0.8 * (1 - 0.8) ^ alpha_df$power
+alpha_df$alpha_1 <- 1 * (1 - 1) ^ alpha_df$power
+
+plot_ly(data = alpha_df) %>%
+  add_lines(x = ~ index, y = ~ alpha_0.01, name = "alpha = 0.01") %>%
+  add_lines(x = ~ index, y = ~ alpha_0.2, name = "alpha = 0.2") %>%
+  add_lines(x = ~ index, y = ~ alpha_0.4, name = "alpha = 0.4") %>%
+  add_lines(x = ~ index, y = ~ alpha_0.6, name = "alpha = 0.6") %>%
+  add_lines(x = ~ index, y = ~ alpha_0.8, name = "alpha = 0.8") %>%
+  add_lines(x = ~ index, y = ~ alpha_1, name = "alpha = 1") %>%
+  layout(title = "Decay Rate of the SES Weights",
+         xaxis = list(title = "Index"),
+         yaxis = list(title = "Weight"))
+```
+
+## Forecasting with the ses function
+
+The main arguments of this function are:
+
+- **initial:** Defines the method for initialising the value of \( \hat{Y_1} \), which can be calculated by using the first few observations of the series by setting the argument to simple, or estimating it with ets model (an advanced version of the Holt-Winters model) when setting it to optimal
+- **alpha:** Defines the value of the smoothing parameter of the model. If set to NULL, the function will estimate it
+- **h:** Sets the forecast horizon
+
+Lets use the ses function to forecast the monthly prices of the Robusta coffee. We leave the last 12 months of the series as as testing set for benchmarking the model's performance. 
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+robusta_par <- ts_split(robusta, sample.out = 12)
+train <- robusta_par$train
+test <- robusta_par$test
+fc_ses <- ses(train, h = 12, initial = "optimal")
+test_forecast(actual = robusta,
+              forecast.obj = fc_ses,
+              test = test) %>%
+  layout(title = "Robusta Coffee Prices Forecast vs. Actual",
+         xaxis = list(range = c(2010, max(time(robusta)))),
+         yaxis = list(range = c(1, 3)))
+```
+
+The forecast in the above plot is flat, and so confidence intervals play a critical role, since the level of uncertainty is higher. Therefore, we need to assess whether the forecast is within the model confidence intervals.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+plot_forecast(fc_ses) %>%
+  add_lines(x = time(test) + deltat(test),
+            y = as.numeric(test),
+            name = "Testing Partition") %>%
+  layout(title = "Robusta Coffee Prices Forecast vs. Actual",
+         xaxis = list(range = c(2010, max(time(robusta)) +
+                                  deltat(robusta))),
+         yaxis = list(range = c(0, 4)))
+```
+
+The forecast plot indicates that the forecast is within the 80% confidence interval. 
+
+## Model optimization with grid search
+
+An alternative optimization is to use a grid search, a simple but powerful approach that is used to identify values of the model's parameters that minimize model error. In the case of the SES model, we apply a grid search to identify the optimal value that minimizes some error metric of the model (MAPE< RMSE etc). In this example, we use a grid search to tune the model parameters, which minimise the MAPE for the Robusta coffee.
+
+Before the function is created, we set the training, testing and validation partitions
+
+```{r, echo = FALSE}
+robusta_par1 <- ts_split(robusta, sample.out = 24)
+
+train1 <- robusta_par1$train 
+test1 <- ts_split(robusta_par1$test, sample.out = 12)$train
+
+robusta_par2 <- ts_split(robusta, sample.out = 12)
+
+train2 <- robusta_par2$train
+valid <- robusta_par2$test
+```
+
+The following alpha value defines the search range and we assign a range of values between 0 and 1 with an increment of 0.01
+
+```{r, echo = FALSE}
+alpha <- seq(from = 0, to = 1, by = 0.01)
+alpha[1] <- 0.001
+```
+
+We can now create the grid
+
+```{r, echo = FALSE}
+ses_grid <- lapply(alpha, function(i){
+  md1 <- md_accuracy1 <- md2 <- md_accuracy2 <- results <-  NULL
+  md1 <- ses(train1, h = 12, alpha = i, initial = "simple")
+  md_accuracy1 <- accuracy(md1, test1)
+  
+  md2 <- ses(train2, h = 12, alpha = i, initial = "simple")
+  md_accuracy2 <- accuracy(md2, valid)
+  
+  resutls <- data.frame(alpha = i, 
+                        train = md_accuracy1[9], 
+                        test = md_accuracy1[10], 
+                        valid = md_accuracy2[10])
+  
+}) %>% bind_rows()
+```
+
+We can plot the grid search results
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+plot_ly(data = ses_grid, x = ~ alpha, y = ~ train, 
+        line = list(color = 'rgb(205, 12, 24)'),
+        type = "scatter", 
+        mode = "lines", 
+        name = "Training") %>%
+  add_lines(x = ~ alpha, y = ~ test, line = list(color = "rgb(22, 96, 167)", dash = "dash"), name=  "Testing") %>%
+  add_lines(x = ~ alpha, y = ~ valid, line = list(color = "green", dash = "dot"), name = "Validation") %>%
+  layout(title = "SES Model Grid Search Results",
+         yaxis = list(title = "MAPE (%)"))
+```
+
+## Holt Method
+
+The Holt method is a forecasting technique that extends exponential smoothing to capture both level and trend in a time series. It is defined by the following equations:
+
+## Level Equation
+\[
+l_t = \alpha y_t + (1 - \alpha)(l_{t-1} + b_{t-1})
+\]
+
+## Trend Equation
+\[
+b_t = \beta (l_t - l_{t-1}) + (1 - \beta) b_{t-1}
+\]
+
+## Forecast Equation
+\[
+\hat{y}_{t+h} = l_t + h b_t
+\]
+
+where:
+- \( l_t \) is the level at time \( t \).
+- \( b_t \) is the trend at time \( t \).
+- \( \alpha \) and \( \beta \) are smoothing parameters (0 < \( \alpha, \beta \) < 1).
+- \( y_t \) is the actual value at time \( t \).
+- \( \hat{y}_{t+h} \) is the forecasted value \( h \) periods ahead.
+
+## Forecasting with the holt method
+
+We can use the US gross domestic product quarterly data to model the holt forecasting
+
+```{r, echo = FALSE}
+load("gdp.RData")
+ts_info(gdp)
+```
+In the below plot, we can see that the GDP series has a strong linear trend and no seasonal component (since the series is seasonally adjusted)
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+ts_plot(gdp, 
+        title = "Gross Domestic Product",
+        Ytitle = "Billions of Dollars",
+        Xtitle = "Source: U.S. Bureau of Economic Analysis / fred.stlouisfed.org")
+```
+
+We can now split the data into train and test data and we leave the last eight quarters for the testing data set. Once we have built the model, let's check its parameters
+
+```{r, echo = FALSE}
+gdp_par <- ts_split(gdp, sample.out = 8)
+train <- gdp_par$train
+test <- gdp_par$test
+fc_holt <- holt(train,  h = 8, initial = "optimal") 
+fc_holt$model
+```
+The initialized values of l and \(\beta\) are close to the values of the first observation of the series (14721.35) and the average difference between each quarter. Additionally, the selected beta is close to zero, which indicates that updating the trend value from period to period doesn't take into account the change in the level. Let's compare the model's performance in the training and test partitions:
+
+```{r, echo = FALSE}
+accuracy(fc_holt, test)
+```
+
+As seen from this output, the ratio between the error rate on the testing and training set is more than 5 times for MSE and nearly 4 times for MAPE, which is caused mainly by he following two reasons:
+
+- The fitted values of the model for the training set are not bound by a linear line (as opposed to the forecast output)
+- The growth of the trend in the last few quarters shifted from a linear rate of growth to an exponential rate.
+
+The changes in the trend growth and forecast can e observed with the test_forecast function:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+test_forecast(gdp, forecast.obj = fc_holt, test = test)
+```
+
+While the Holt model was designed to handle time series with the linear trend, the exponential argument in the holt function provides the option to handle series with exponential or decaying trends when set to TRUE. In the preceding example, we can utuilize the exponential argument to modify the growth pattern of the trend. In this case, we want a higher weight for the trend, so we set \(\beta\) to 0.75 (a more robust means to identify \(\beta\) would be a grid search):
+
+```{r, echo = FALSE}
+fc_holt_exp <- holt(train,
+                    h = 8,
+                    beta = 0.75 ,
+                    initial = "optimal",
+                    exponential = TRUE) 
+
+fc_holt_exp$model
+```
+Let's review the accuracy of the training and testing set:
+
+```{r, echo = FALSE}
+accuracy(fc_holt_exp, test)
+```
+There is still a large ratio difference between training and test for RMSE and MAPE. We can also plot it:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+test_forecast(gdp, forecast.obj = fc_holt, test = test)
+```
+
+## Holt Winters Model
+
+This model is an extended version of the Holt model and can handle time series data with both trend and season components. Forecasting the seasonal component requires a third smoother parameter and equation, in addition to the ones of the level and trend. Both of the trend and seasonal components could have either an additive or multiplicity structure, which adds some complexity to the model as there are multiple possible combinations:
+
+- Additive trend and seaosonal components
+- Additive trend and multiplicative seasonal components
+- Multiplicative trend and additive seasonal components
+- Multiplicative trend and seasonal components
+
+Therefore, before building an HW model, we need to identify the structure of the trend and the seasonal components. We can use HW to forecast the last 12 months of the US gas series
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+load("USgas.RData")
+decompose(USgas) %>% plot()
+```
+
+As seen in the preceeding plot, both the trend and seasonal components of the series have an additive structure. We can next create the training and test data sets to evaluate the model performance
+
+```{r, echo = FALSE}
+USgas_par <- ts_split(USgas, 12)
+train <- USgas_par$train
+test <- USgas_par$test
+md_hw <- HoltWinters(train)
+md_hw
+```
+The model output indicates that the model is learning from the level and seasonal update(with \(\alpha\) = 0.35 and \(\gamma\) = 0.44). However, there is no learning from the trend initialised \(\beta\) = 0. The next step is to forecast the 12 months and evaluate the model's performance.
+
+```{r, echo = FALSE}
+fc_hw <- forecast(md_hw, h = 12)
+accuracy(fc_hw, test)
+```
+The accuracy metrics of the model are quite balanced, with a MAPE of 4.3% and 3.7% for training and test respectively.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+test_forecast(actual = USgas, 
+              forecast.obj = fc_hw, 
+              test = test)
+```
+
+As we can see in the plot, the HW model does a good job of capturing both the series seasonal patterns, but it misses the peak of the year during the month of January in most cases. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

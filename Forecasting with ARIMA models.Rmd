@@ -1,0 +1,635 @@
+---
+title: "Forecasting with ARIMA Models"
+author: "Nicholas Bradley"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include = FALSE}
+# knitr::opts_chunk$set(fig.width=10, fig.height=10)
+library(forecast)
+library(TSstudio)
+library(plotly)
+library(dplyr)
+library(datasets)
+library(lubridate)
+library(stats)
+library(base)
+setwd("C:/R Portfolio/Time Series")
+```
+
+# Forecasting with ARIMA Models
+
+This analysis will present forecasting with Autoregressive Integrated Moving Average (ARIMA) models and includes the following topics:
+
+- The ARMA and ARIMA models
+- The seasonal ARIMA model
+- Linear regression with the ARIMA error model
+
+## The ARMA model
+
+The ARMA model is a combination of two models: the autoregressive (AR) model and the moving average (MA) model. The ARMA model is a combination of the AR(p) and MA(q) processes. The general form of an ARMA(p, q) model can be written as:
+
+\[ X_t = \phi_1 X_{t-1} + \phi_2 X_{t-2} + \cdots + \phi_p X_{t-p} + \epsilon_t + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \cdots + \theta_q \epsilon_{t-q} \]
+
+where:
+
+- \( X_t \) is the time series at time \( t \).
+- \( \phi_1, \phi_2, \ldots, \phi_p \) are the parameters of the autoregressive part of the model.
+- \( \epsilon_t \) is the error term (white noise) at time \( t \).
+- \( \theta_1, \theta_2, \ldots, \theta_q \) are the parameters of the moving average part of the model.
+- \( p \) is the order of the autoregressive part.
+- \( q \) is the order of the moving average part.
+
+In compact form, the ARMA model can also be represented as:
+
+\[ \Phi(B) X_t = \Theta(B) \epsilon_t \]
+
+where \( \Phi(B) \) and \( \Theta(B) \) are polynomials in the backshift operator \( B \):
+
+\[ \Phi(B) = 1 - \phi_1 B - \phi_2 B^2 - \cdots - \phi_p B^p \]
+\[ \Theta(B) = 1 + \theta_1 B + \theta_2 B^2 + \cdots + \theta_q B^q \]
+
+The backshift operator \( B \) is defined such that \( B X_t = X_{t-1} \).
+
+Let's create time series with an ARMA(1,2) structure with the arima.sim function and review the characteristics of the model. We can set the *p* and *q* parameters of the order argument to *1* and *2* and set the AR coefficient to 0.7 and the MA coefficients to 0.5 and -0.3 respectively.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+set.seed(12345)
+
+arma <- arima.sim(model = list(order(1,0,2), ar = c(0.7), ma = c(0.5,-0.3)), n = 500)
+ts_plot(arma, 
+        title = "Simulate ARMA(1,2) Series",
+        Ytitle = "Value",
+        Xtitle = "Index")
+```
+
+Fitting an ARMA model is easy with the arima function, we just have to set the *p* and *q* parameters:
+
+```{r, echo = FALSE}
+arma_md <- arima(arma, order = c(1,0,2))
+arma_md
+```
+
+The output shows that the ar1, ma1 and ma2 represent the coefficients and the intercept parameter is not statistically significant, which makes sense as we didn't add an intercept to the simulated data
+
+## The Arima model
+
+The ARIMA (AutoRegressive Integrated Moving Average) model is a popular statistical method for time series forecasting. It combines three components: autoregression (AR), differencing (I for integrated), and moving average (MA). The ARIMA model is a powerful tool for time series analysis and forecasting, incorporating autoregression, differencing, and moving average components to capture various patterns in the data.
+A limitation of the ARMA model is that it cannot handle non stationary time series data, so therefore, if the input series is non-stationary, a preprocessing step is required to transform the series from a non-stationary state to a stationary time series. The ARIMA model provides the solution by adding the integrated process for the ARMA model. The Integrated process is simply differencing the series with its lags, where the degree of the differencing is represented by the *d* parameter. The differencing process is one way to transform the methods of a series from non stationary to stationary.
+
+An ARIMA model is generally denoted as ARIMA(p, d, q) where:
+- \( p \) is the order of the autoregressive part,
+- \( d \) is the degree of differencing,
+- \( q \) is the order of the moving average part.
+
+The general form of an ARIMA model can be written as:
+
+\[ y_t = c + \phi_1 y_{t-1} + \phi_2 y_{t-2} + \ldots + \phi_p y_{t-p} + \epsilon_t + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \ldots + \theta_q \epsilon_{t-q} \]
+
+where:
+- \( y_t \) is the differenced series (if \( d > 0 \), otherwise the original series),
+- \( c \) is a constant term,
+- \( \phi_1, \phi_2, \ldots, \phi_p \) are the coefficients of the autoregressive part,
+- \( \epsilon_t \) is the white noise error term at time \( t \),
+- \( \theta_1, \theta_2, \ldots, \theta_q \) are the coefficients of the moving average part.
+
+### Differencing
+
+When \( d > 0 \), the original series \( Y_t \) is differenced \( d \) times to achieve stationarity. The differencing process can be represented as:
+
+\[ y_t = \Delta^d Y_t \]
+
+where \( \Delta \) is the differencing operator.
+
+### Autoregressive (AR) Part
+
+The AR part of the model is given by:
+
+\[ y_t = c + \phi_1 y_{t-1} + \phi_2 y_{t-2} + \ldots + \phi_p y_{t-p} + \epsilon_t \]
+
+### Moving Average (MA) Part
+
+The MA part of the model is given by:
+
+\[ y_t = \epsilon_t + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \ldots + \theta_q \epsilon_{t-q} \]
+
+### Full ARIMA Model
+
+Combining the AR and MA parts with differencing, the full ARIMA model can be expressed as:
+
+\[ y_t = c + \phi_1 y_{t-1} + \phi_2 y_{t-2} + \ldots + \phi_p y_{t-p} + \epsilon_t + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \ldots + \theta_q \epsilon_{t-q} \]
+
+where \( y_t = \Delta^d Y_t \) if \( d > 0 \).
+
+## Indentifying the ARIMA process
+
+We can apply an ARIMA model, whenever the input series is not stationary. Differencing is required to transfer it to a stationary state. Identifying and setting the ARIMA model is a two step process and is based on the following steps:
+
+- Identify the degree of differencing that is required to transfer the series into a stationary state
+- Identify the ARMA process (or R and MA processes)
+
+## Identifying the model degree of differencing
+
+Similiar to the *p* and *q* parameters, setting the *d* parameter (the degree of differencing of the series) can be done with the ACF and PACF plots. We can use the Coffee Prices data.
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+load("Coffee_Prices.RData")
+robusta_price <- window(Coffee_Prices[,1], start = c(2000,1)) 
+ts_plot(robusta_price,
+        title = "The Robusta Coffee Monthly Prices",
+        Ytitle = "Price in USD",
+        Xtitle = "Year")
+```
+As can be seen, the coffee prices over time are trending up and therefore, it is not in a stationary state. In addition, as this series represents continual prices, it is likely that the series has a strong correlation with its past lags (as changes in price) are typically close to the previous price). We can use acf function to identify the type of relationship between the series and it's lags:
+
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+acf(robusta_price)
+```
+
+As is evident, the correlation of the series with it's previous lags is slowly decaying over time in a liner manner. Removing both the series trend and correlation between the series and its lags can be done by differencing the series, which can be done with the diff function:
+
+```{r, echo = FALSE}
+robusta_price_d1 <- diff(robusta_price)
+```
+
+Let's review the first difference of the series with the acf and pacf functions:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+par(mfrow=c(1,2))
+acf(robusta_price_d1)
+pacf(robusta_price_d1)
+par(mfrow=c(1,1))
+```
+The ACF and PACF plots of the first difference of the series indicate that an AR(1) process is appropriate to use on the differenced series since the ACF is tailing off and the PACF cuts on the first lag. Therefore, we need to apply an ARIMA(1,1,0) model on the robusta_prices series to include the first difference:
+
+```{r, echo = FALSE}
+robusta_md <- arima(robusta_price, order = c(1, 1, 0))
+summary(robusta_md)
+```
+As can be seen, the ar1 coefficient is statistically significant and it's a good idea to check the model residuals:
+
+```{r, echo = FALSE}
+checkresiduals(robusta_md)
+```
+
+The plots indicate that the residuals are white noise. The ACF plot indicates that there are some correlated lags, but they are only on the border of being significant and so they can be ignored. 
+
+## The Seasonal ARIMA model
+
+The seasonal ARIMA (SARIMA) model is an ARIMA model with a seasonal component, which means that the time series has a strong relationship with its seasonal lags. The SARIMA model utilizes the seasonal lags by adding three components to the ARIMA model:
+
+- **SAR(P) process:** A seasonal AR process of the series with its past *P* seasonal lags. 
+- **SMA(Q) process:** A seasonal MA process of the series with its past *Q* seasonal error terms
+- **SI(D) process: ** A seasonal differencing of the series with its past *D* seasonal lags
+
+The *p* and *q* parameters define the order of the AR and MA processes with it's non seasonal lags, respectively and *d* defines the degree of differencing of the series with it's non seasonal lags. Likewise, the *P* and *Q* parameters represent the corresponding order of the seasonal MA and AR processes of the series with it's seasonal lags and *D* defines the degree of differencing of the series with it's non seasonal lags.
+
+## Tuning the SARIMA model
+
+The tuning process of the SARIMA model is the same logic as an ARIMA model, the only difference being the model complexity as it now contains six parameters to tune, namely  *p*, *d*, *q*, *P*, *D*, and *Q* as opposed to the ARIMA model three parameters. All parameters can be tuned with using the ACF and PACF plots. The main difference between these two sets of parameters (non seasonal and seasonal) is that the none seasonal parameters are tuned with non seasonal lags and the seasonal parameters are tuned with the seasonal lags (for example, for monthly series with lags 12, 24, 36, 48 etc)
+
+## Tuning the non-seasonal parameters
+
+Tuning these parameters is based on the ACF and PACF plots:
+
+- n AR(p) process should be used if the non seasonal lags of the ACF plot are tailing off, while the corresponding lags of the PACF plots are cutting off on the *p* lag
+- Similarly, and MA(*q*) process should be used if the non seasonal lags of the the ACF plot are cutting off on the *q* lag and the corresponding lags of the PACF plots are tailing off. 
+- When both the ACF and PACF non-seasonal lags are tailing off, an ARMA model should be used.
+- Differencing the series with the non-seasonal lags should be applied when the non-seasonal lags of the ACF plot are decaying in a linear manner.
+
+## Tuning the seasonal parameters
+
+- We use a seasonal autoregressive process with an order of P or SAR(P) if the seasonal lags of the ACF are tailing off and the seasonal lags of the PAC plot are cutting off by the P seasonal lag
+- Similarly, if we apply a seasonal moving average with an order of Q, or SMA(Q), if the seasonal lags of the ACF plot are cutting off by the Q seasonal lag and the seasonal lags of the PACF are tailing off.
+- An ARMA model should be used whenever the seasonal lags of both the ACF and PACF plots are tailing off
+- Seasonal differencing should be applied if the correlation of the lags are decaying in a linear manner
+
+## Forecasting US monthly natural gas consumption with the SARIMA model
+
+Let's load and plot the data
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+load("USgas.RData")
+ts_plot(USgas,
+        title = "US Monthly Natural Gas consumption", 
+        Ytitle = "Billion Cubic Feet",
+        Xtitle = "Year")
+```
+
+The USgas series has a strong seasonal pattern and herefore, the SARMIMA is the most appropriate model to use. As the model is trending up, we can conclude that the series is not stationary and some differencing of the series is required. We can start by creating the training and testing data sets with the ts_split function, leaving the last 12 months of the series as the testing data:
+
+```{r, echo = FALSE}
+USgas_split <- ts_split(USgas, sample.out = 12)
+
+train <- USgas_split$train
+test <- USgas_split$test
+```
+
+Before we start developing the SARIMA model, we need to run diagnostics to determine the series correlation with the ACF and PACF functions. We are interested in viewing the relationship of the series with it's seasonal lags, so we increase the number of lags to calculate and display by setting the lag.max argument to 60 lags:
+
+```{r, echo = FALSE}
+par(mfrow=c(1, 2))
+acf(train, lag.max = 60)
+pacf(train, lag.max = 60)
+par(mfrow=c(1, 1))
+```
+
+The ACF plot indicates the series has a strong correlation with the seasonal and non seasonal lags. The linear decay of the seasonal lags indicates that the series is not stationary and that seasonal differencing is required. We start with a seasonal differencing of the series and plot the output to identify the series is in a stationary state.
+
+```{r, echo=FALSE,, fig.width = 10, fig.height = 10}
+USgas_d12 <- diff(train, 12)
+
+ts_plot(USgas_d12,
+        title = "US Monthly Natural Gas consumption - First Seasonal Difference", 
+        Ytitle = "Billion Cubic Feet (First Difference)",
+        Xtitle = "Year")
+```
+
+While we removed the series trend, the variation of the series is not stable yet. Therefore, we will also try to take the first difference of the series:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+USgas_d12_1 <- diff(diff(USgas_d12, 1))
+
+ts_plot(USgas_d12_1,
+        title = "US Monthly Natural Gas consumption - First Seasonal and Non-Seasonal Differencing", 
+        Ytitle = "Billion Cubic Feet (Difference)",
+        Xtitle = "Year")
+```
+
+After taking the first order differencing, along with the first order seasonal differencing, the series seems to stablilize around the zero x axis line (or fairly close to being stable). After transforming the series into a stationary state, we can review the ACF and PACF functions again to identify the required process:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+par(mfrow = c(1, 2))
+acf(USgas_d12_1, lag.max = 60)
+pacf(USgas_d12_1, lag.max = 60)
+par(mfrow = c(1, 1))
+```
+
+The main observation in both the ACF and PACF plots is that both the non-seasonal and seasonal lags (in both plots) are tailing off. We can therefore conclude that after we difference the series and transform them into a stationary state, we should apply an ARMA process for both the seasonal and non-seasonal components of the SARIMA model. The tuning process for the SARIMA model parameters follows these steps:
+
+- We set the model maximum order, (that is, the sum of the six parameters of the model)
+- We set a range of a possible combination of the parameters' values under the model's maximum order constraint.
+- We test and score each model, that is, a typical score methodology within the AIC or BIC
+- We select a set of parameter combinations that give the best results
+
+Now it is time to start the tuning process for the USgas series by setting the model order to seven and setting the values of the model parameters to be in the range of 0 and 2. Given that we had set the values of *d* and *D* (for example, *d* = 1 and *D* = 1), which are the differencing parameters of the SARIMA model, we can now focus on turning the remaining four parameters of the model, that is, p, q, P and Q. Let's define the parameters and assign the search values.
+
+```{r, echo=FALSE}
+p <- q <- P <- Q <- 0:2
+```
+
+Under the model's order constraint and the possible range of values of the model parameters, there are 66 possible combinations. Therefore, it will make sense to automate the search process and build a grid search function to identify the values of the parameters that minimize the AIC score. We utilise the expand.grid function to create a data.frame with all the possible search combinations
+
+```{r, echo = FALSE}
+arima_grid <- expand.grid(p, q, P, Q)
+names(arima_grid) <- c("p", "q", "P", "Q")
+arima_grid$d <- 1
+arima_grid$D <- 1
+```
+
+Next, we trim the grid search table by using the combinations that exceed the order constraint of the model (for example, k -< 7). We can calculate and assign this to the k variable with the rowsums function:
+
+```{r, echo = FALSE}
+arima_grid$k <- rowSums(arima_grid)
+```
+
+Next, we use the filter function to remove combinations where the value of k is greater than 7:
+
+```{r, echo = FALSE}
+arima_grid <- arima_grid %>% filter(k <= 7)
+```
+
+The grid search table is ready, so we can start the search process. We use the lapply function to iterate over the grid search table. This function will train the SARIMA model and score the AIC for each set of parameters in the grid search table. The arima function trains the SARIMA by setting the seasonal arguments of the model with the values of P, D and Q:
+
+```{r, echo = FALSE}
+# Function to fit ARIMA model and return results, handling errors
+fit_arima <- function(grid_row) {
+  tryCatch({
+    md <- arima(train, order = c(grid_row$p, grid_row$d, grid_row$q), 
+                seasonal = list(order = c(grid_row$P, grid_row$D, grid_row$Q)))
+    return(data.frame(p = grid_row$p, d = grid_row$d, q = grid_row$q,
+                      P = grid_row$P, D = grid_row$D, Q = grid_row$Q,
+                      AIC = md$aic))
+  }, error = function(e) {
+    return(NULL)
+  })
+}
+
+# Apply the function to each row of the grid
+arima_search <- lapply(1:nrow(arima_grid), function(i) {
+  fit_arima(arima_grid[i, ])
+}) %>% bind_rows() %>% arrange(AIC)
+```
+
+Let's now review the top results of the search table:
+
+```{r, echo = FALSE}
+head(arima_search)
+```
+
+The leading model based on the above table is the SARIMA(1,1,1)(2,1,1) model.
+Before we finalise the forecast, let's evaluate the selected model's performance on the testing set. We will retrain the model using the settings of the selected model:
+
+```{r, echo = FALSE}
+USgas_best_md <- arima(train, order = c(1,1,1), seasonal = list(order = c(2,1,1)))
+USgas_best_md
+```
+To determine if the coefficients are statistically significant, we typically compare each coefficient to its standard error. A common rule of thumb is that if the absolute value of the coefficient divided by its standard error (i.e., the t-statistic) is greater than 2, the coefficient is considered statistically significant. Let's calculate the t-statistics for each coefficient:
+
+```{r, echo = FALSE}
+# Coefficients and standard errors
+coefficients <- c(ar1 = 0.4247, ma1 = -0.9180, sar1 = 0.0132, sar2 = -0.2639, sma1 = -0.7449)
+standard_errors <- c(ar1 = 0.0770, ma1 = 0.0376, sar1 = 0.0894, sar2 = 0.0834, sma1 = 0.0753)
+
+# Calculate t-statistics
+t_statistics <- coefficients / standard_errors
+
+# Print t-statistics
+t_statistics
+```
+
+```{r, echo = FALSE}
+# Function to interpret significance
+interpret_significance <- function(t_stat) {
+  if (abs(t_stat) > 2) {
+    return("Significant (|t_stat| > 2)")
+  } else {
+    return("Not significant (|t_stat| < 2)")
+  }
+}
+
+# Apply interpretation
+significance <- sapply(t_statistics, interpret_significance)
+
+# Print interpretation
+significance
+```
+Let's now use the USgas_best_md trained model to forecast the corresponding observations of the testing set:
+
+```{r, echo = FALSE}
+USgas_test_fc <- forecast(USgas_best_md, h = 12)
+accuracy(USgas_test_fc, test)
+```
+Test Set Metrics
+ME (Mean Error): 42.211253
+
+The test set has a higher mean error compared to the training set, indicating the model may be slightly biased when applied to unseen data.
+
+**RMSE (Root Mean Squared Error):** 104.79281
+
+The RMSE is higher for the test set, suggesting larger errors in the test set predictions compared to the training set.
+
+**MAE (Mean Absolute Error):** 83.09943
+
+Similar to RMSE, the MAE is higher for the test set.
+
+**MPE (Mean Percentage Error):** 1.4913412
+
+The test set MPE indicates a higher average percentage bias in the test predictions compared to the training set.
+
+**MAPE (Mean Absolute Percentage Error):** 3.314280
+
+The test set MAPE is slightly lower than the training set, indicating the test set errors are a lower percentage of actual values than the training set errors.
+
+**MASE (Mean Absolute Scaled Error):** 0.7216918
+
+The test set MASE is higher than 1, suggesting the model does not perform as well as a naïve forecasting method on the test data.
+
+**ACF1 (First Autocorrelation of Errors):** -0.049999868
+
+The test set ACF1 is close to 0, indicating no significant autocorrelation in the test set errors.
+
+**Theil's U:** 0.3469228
+
+Theil's U statistic compares the forecast accuracy to that of a naïve model. Values less than 1 indicate the model is better than the naïve approach. Here, a value of 0.3469228 suggests the model is substantially better than the naïve model.
+
+**Summary**
+
+The model performs reasonably well, with lower errors in the training set than the test set, indicating good fit but potential overfitting. The slightly higher errors in the test set indicate the model might not generalize perfectly to unseen data. However, Theil's U value indicates that the model performs substantially better than a naïve forecast.
+
+Now we can use test_forecast to get a more intuitive view of the model's performance on the training and testing partitions:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+test_forecast(USgas, 
+              forecast.obj = USgas_test_fc,
+              test = test)
+```
+
+As seen, the SARIMA model successfully captures the seasonal and trend pattern of the series. However, the model finds it difficult to  capture the seasonal peaks (month of January) on the training partition and has 6.7% absolute error for the month of January (yearly peak) in the testing partition. We can handle this uncertainty of the model during peak times with model confidence intervals. Once happy with the model, we can forecasting processes and generate the final forecast with the selected model. We will start by retraining the selected model on all the series:
+
+```{r, echo = FALSE}
+final_md <- arima(USgas, order = c(1,1,1), seasonal = list(order = c(2,1,1)))
+```
+
+Before we forecast the 12 months, let's verify the residuals of the model satisfy the model condition:
+
+```{r, echo = FALSE}
+checkresiduals(final_md)
+```
+
+The residuals plot indicates that the residuals are white noise and normally distributed, so we can now forecase the next 12 months:
+
+```{r, echo = FALSE, fig.width = 10, fig.height = 10}
+USgas_fc <- forecast(final_md, h = 12)
+plot_forecast(USgas_fc,
+              title = "US Natural Gas Consumption - Forecast",
+              Ytitle = "Billion Cubic Feet",
+              Xtitle = "Year")
+```
+
+## The auto.arima function:
+
+A significant challenge when forecasting with the ARIMA models is the long winded tuning process of the models, which includes many steps to verify the structure of the series (stationary or non stationary) data transformations, descriptive analysis with ACF and PACF to identify pocess types, and tuning model parameters. It can take a few minutes to train a single ARIMA model, but quickly becomes time consuming if there are many time series to forecast.
+
+The auto.arima functiomn provides a solution as it automates the tuning process of the ARIMA model with the use of statistical methods to identify the structure of the series (stationary or not) and type (seasonal or not) and sets the model's parameters accordingly. We can use it to forecast the USgas series:
+
+```{r, echo = FALSE}
+USgas_auto_md1 <- auto.arima(train)
+USgas_auto_md1
+```
+
+To determine the statistical significance of the coefficients, we calculate the t-values as the ratio of the coefficient estimates to their standard errors.
+
+```{r, echo = FALSE}
+# Coefficient estimates
+coef_est <- c(0.4301, -0.0372, -0.9098, 0.0117, -0.2673, -0.7431)
+
+# Standard errors
+std_err <- c(0.0794, 0.0741, 0.0452, 0.0887, 0.0830, 0.0751)
+
+# Compute t-values
+t_values <- coef_est / std_err
+t_values
+```
+
+The t-values are:
+
+```{r, echo = FALSE}
+# Example output similar to the one provided
+USgas_auto_md1 <- list(
+  coef = c(ar1 = 0.4301, ar2 = -0.0372, ma1 = -0.9098, sar1 = 0.0117, sar2 = -0.2673, sma1 = -0.7431),
+  se = c(ar1 = 0.0794, ar2 = 0.0741, ma1 = 0.0452, sar1 = 0.0887, sar2 = 0.0830, sma1 = 0.0751)
+)
+USgas_auto_md1
+```
+
+A coefficient is typically considered statistically significant if the absolute value of its t-value is greater than 2.
+
+Interpretation of Significance
+
+Statistically significant coefficients (|t-value| > 2):
+
+```{r, echo = FALSE}
+# Coefficient estimates and standard errors
+coef_est <- USgas_auto_md1$coef
+std_err <- USgas_auto_md1$se
+
+# Compute t-values
+t_values <- coef_est / std_err
+t_values
+```
+Not statistically significant coefficients (|t-value| <= 2):
+
+ar2 and sar1
+
+In summary, the significant coefficients in the model are ar1, ma1, sar2, and sma1, indicating that these terms have a statistically significant relationship with the time series data. The ar2 and sar1 coefficients are not statistically significant, suggesting their contribution to the model may be negligible.
+
+By default, the auto.arima function applies a shorter model search by using a step-wise approach for reducing the search time. The trade-off is that the model may miss some models that may achieve better results. We can improve this with setting the step-wise argument to false, which enables a more robust search at the cost of increased search time. Let's retrain the US gas series with the following changes to the parameters:
+
+- Set the differencing parameters d and D to 1
+- Limit the order of the model to seven by using the max.order argument. This argument defines the maximum values of *p*+*q*+*P*+*Q*, hence we should set it to five(given that d and D ae set to 1)
+- Under these constraints, search all possible combinations by setting the stepwise argument to false
+- Set the approximation argument to FALSE for more accurate calculations of the information criteria.
+
+```{r, echo = FALSE}
+USgas_auto_md2 <- auto.arima(train, 
+                             max.order = 5,
+                             D = 1,
+                             d = 1,
+                             ic = "aic",
+                             stepwise = FALSE, 
+                             approximation = FALSE)
+USgas_auto_md2
+```
+```{r, echo = FALSE}
+# Coefficient estimates
+coef_est <- c(ar1 = 0.4247, ma1 = -0.9180, sar1 = 0.0132, sar2 = -0.2639, sma1 = -0.7449)
+
+# Standard errors
+std_err <- c(ar1 = 0.0770, ma1 = 0.0376, sar1 = 0.0894, sar2 = 0.0834, sma1 = 0.0753)
+
+# Compute t-values
+t_values <- coef_est / std_err
+t_values
+```
+
+sar1 is not statistically significant, the rest are
+
+## Linear regression with ARIMA errors
+
+One main assumption of linear regression is that the error term of the series is white noise series (for example, there is no correlation between the residuals and their lags). However, when working with time series, this assumption is eased as typically, the model predictors do not explain all the variations of the series and some patterns are left on the model residuals. An example is the AirPassenger time series.
+
+## Violation of white noise assumption
+
+To illustrate this point, we can use the tslm function to regress the AirPassenger series with its trend, seasonal component and seasonal lag (lag 12) and then evaluate the model residuals with the checkresiduals function. Let's prepare the data and create new features to represent the series trend and seasonal components and the seasonal lag
+
+```{r, echo = FALSE}
+load("AirPassengers.RData")
+df <- ts_to_prophet(AirPassengers) %>% setNames(c("date", "y"))
+df$lag12 <- dplyr::lag(df$y, n = 12)
+df$month <- factor(month(df$date), ordered = FALSE)
+df$trend <- 1:nrow(df)
+```
+
+The three variables represent the following:
+
+- lag12: a numeric variable that represents the seasonal lag of the series (that is, lag 12)
+- month: a categorical variable (12 categories, one for each month of the year), that represents the seasonal component of the series
+- trend: a numeric variable that represents the marginal effect of moving in time by one index unit, which in this case, is the marginal change in the series by moin in time by one month.
+
+Now we can split the series into training and test partitions, leaving the last 12 months for testing
+
+```{r, echo=FALSE}
+par <- ts_split(ts.obj = AirPassengers, sample.out = 12)
+train <- par$train
+test <- par$test
+```
+
+For the regression of the time series object with an external data frame object, we can apply the same split for training and testing on the predictors data frame object
+
+```{r, echo=FALSE}
+train_df <- df[1:(nrow(df) - 12), ]
+test_df <- df[(nrow(df) - 12 + 1):nrow(df), ]
+```
+
+Now we can train the model and check the residuals:
+
+```{r, echo=FALSE}
+md1 <- tslm(train ~ season + trend + lag12, data = train_df)
+checkresiduals(md1)
+```
+
+In the ACF plot, the residuals series has a strong correlation with its past lags and therefore, the series is not white noise. We can conclude from the residuals that the regression model could not capture all the series patterns. Generally, this should not come as a surprise since the variation of the series could be affected by other variables, like the ticket and oil prices, unemployment rate etc. A simple solution  is to model the error terms with the ARIMA mode and add it to the regression.
+
+# Modelling the residuals with the ARIMA model
+
+As evident in the preceeding ACF plot, the AirPassengers residuals indicate that the model failed to capture all the patterns of the series. Another way to think about that is that the series modelling is not yet complete and additional modelling is needed on the model residuals to reveal the true error term of the model. In reality, finding the additional parameters that can explain the remaining variation of the series is costly and time consuming and if other variables are available, it is not easy to predict them. (as they will need inputs into the actual forecast). A simple solution is to ue the auto correlation relationship of the model residuals and model them with the ARIMA model. In other words, we modify the AirPassengers linear regression and add the AR(*p*) and MA(*p*) processes to the model:
+
+```{r, echo = FALSE}
+
+# Ensure month is a factor
+#train$month <- as.factor(train$month)
+
+md2 <- auto.arima(train, 
+                  xreg = cbind(model.matrix(~ month,train_df)[,-1], 
+                               train_df$trend, 
+                               train_df$lag12), 
+                  seasonal = TRUE, 
+                  stepwise = FALSE, 
+                  approximation = FALSE)
+summary(md2)
+```
+
+Note that the auto.arima and arima functions do not support categorical variables with the xreg argument, so to capture the seasonal effect, it is neccesary to use one hot encoding to create binary variables. The model.matrix function achieves this. We set the seasonal argument to TRUE to capture the seasonal and non seasonal models
+
+## Interpretation of the output:
+
+AR Terms (ar1, ar2): These coefficients indicate the influence of the first and second lagged values of the series on the current value. Both coefficients are positive, suggesting a positive relationship with past values.
+
+Seasonal AR Terms (sar1, sar2): These coefficients capture the seasonal effects at lag 12 (one year ago). Both coefficients are negative, indicating a seasonal pattern that has an inverse relationship with the values from the previous year.
+
+Monthly Coefficients: These represent the impact of each month on the series. For instance, February has a negative coefficient, indicating lower values in February compared to the base month. July and August have significantly higher positive coefficients, suggesting higher values during these months.
+
+Model Fit (sprintf("sigma^2 = %.2f", sigma2), log likelihood, AIC, AICc, BIC): The values of sprintf("sigma^2 = %.2f", sigma2), log likelihood, AIC, AICc, and BIC help assess the model's fit. Lower AIC and BIC values generally indicate a better model.
+
+Training Set Error Measures: These metrics provide insight into the model's accuracy. Lower RMSE, MAE, and MAPE values indicate better predictive accuracy. The low ACF1 value suggests minimal autocorrelation in the residuals, indicating a good fit.
+
+Overall, the model appears to capture both the autoregressive and seasonal patterns in the data well, with monthly coefficients highlighting seasonal effects. The error measures indicate that the model fits the training data reasonably well.
+
+Lets' check the resdiduals:
+
+
+```{r, echo=FALSE}
+checkresiduals(md2)
+```
+
+The change in the ACF plot can be seen after applying the linear regression model with ARIMA errors as the majority of the lags are not statistically significant as opposed to the preceding linear model (md1). Let's evaluate the performance of both models:
+
+```{r, echo=FALSE}
+fc1 <- forecast(md1, newdata = test_df)
+fc2 <- forecast(md2, xreg = cbind(model.matrix(~ month,test_df)[,-1], 
+                                  test_df$trend, 
+                                  test_df$lag12))
+```
+
+```{r, echo=FALSE}
+accuracy(fc1, test)
+```
+
+```{r, echo=FALSE}
+accuracy(fc2, test)
+```
+We can see significant improvements in the MAPE score in the fc2 model over the fc1 model for both training and testing data.
